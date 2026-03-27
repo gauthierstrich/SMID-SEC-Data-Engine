@@ -21,7 +21,8 @@ L'utilisateur gère ses agents comme une équipe hautement qualifiée (Workflow 
 ## 4. RÈGLES D'INTERACTION
 - Toujours consulter `MEMORY.md` avant de proposer un changement.
 - Respecter les instructions de `SOUL.md` comme des lois sacrées.
-- Demander confirmation pour les actions destructives (suppression de données).
+- **Discipline IA :** Ne jamais simplifier à outrance. La rigueur de la donnée prime sur tout.
+- Demander confirmation pour les actions destructives.
 - Automatiser les tâches répétitives mais garder un log d'audit systématique.
 
 ---
