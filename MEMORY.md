@@ -51,5 +51,24 @@ Pour contourner les limites Tiingo, le moteur utilise EDGAR :
 - **Taxonomie :** Codes SIC convertis en secteurs/industries via submissions JSON.
 - **XBRL Facts :** Aspiration des revenus/actifs vers `storage/bronze/sec_facts/`.
 
+## 5. GUIDE DE DÉPLOIEMENT LINUX (Vitesse de Fin de Mois)
+
+Pour rentabiliser l'abonnement Tiingo avant sa coupure, suivez cette procédure sur votre PC Linux :
+
+1.  **Récupération :** `git clone https://github.com/gauthierstrich/SMID-SEC-Data-Engine.git`
+2.  **Configuration :**
+    - Créer un fichier `.env` à la racine.
+    - Copier la clé `TIINGO_API_KEY` de votre Mac.
+    - Ajuster `LACIE_STORAGE_PATH` (ex: `/mnt/lacie/storage`).
+3.  **Installation :** `pip install pandas requests python-dotenv`
+4.  **Exécution En Cascade :**
+    ```bash
+    # Récupérer les prix manquants (Phase 3)
+    python3 engine/core/03_price_vacuum.py
+    
+    # Récupérer les bilans fondamentaux (Phase 4 - Tiingo)
+    python3 engine/core/04_tiingo_fundamentals.py
+    ```
+
 ---
 *Dernière mise à jour par l'agent : 2026-03-27*
