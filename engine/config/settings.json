@@ -1,0 +1,7 @@
+{
+    "tiingo_api_key": "bbeaebf4e4a4f696e985830ed3eca8b8d5b2187d",
+    "target_market": "US",
+    "asset_type": "stock",
+    "currency": "USD",
+    "rate_limit_sleep": 0.05
+}
