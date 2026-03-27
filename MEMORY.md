@@ -63,11 +63,11 @@ Pour rentabiliser l'abonnement Tiingo avant sa coupure, suivez cette procédure 
 3.  **Installation :** `pip install pandas requests python-dotenv`
 4.  **Exécution En Cascade :**
     ```bash
-    # Récupérer les prix manquants (Phase 3)
+    # Récupérer les prix manquants (Phase 3 - Tiingo)
     python3 engine/core/03_price_vacuum.py
     
-    # Récupérer les bilans fondamentaux (Phase 4 - Tiingo)
-    python3 engine/core/04_tiingo_fundamentals.py
+    # Récupérer les bilans fondamentaux (Phase 4 - SEC EDGAR)
+    python3 engine/core/04_sec_fundamentals.py
     ```
 
 ---
