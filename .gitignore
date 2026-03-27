@@ -1,5 +1,7 @@
 # Environments
 .env
+.env.local
+.env.secret
 
 # Storage & Logs (Large data)
 engine/logs/

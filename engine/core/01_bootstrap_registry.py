@@ -7,10 +7,15 @@ from datetime import datetime
 # Load configuration
 load_dotenv()
 API_KEY = os.getenv("TIINGO_API_KEY")
-BASE_DIR = "/Users/strichgauthier/Documents/SMID-SEC Data Engine"
+
+# Dynamic Path Resolution (Works on Mac/Linux)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../../"))
 REGISTRY_DIR = os.path.join(BASE_DIR, "engine/registry")
 LOG_DIR = os.path.join(BASE_DIR, "engine/logs")
-LACIE_STORAGE = "/Volumes/LaCie/SMID-SEC Data Engine/storage"
+
+# Storage defaults to LaCie on Mac, but can be overridden via .env for Linux
+LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", "/Volumes/LaCie/SMID-SEC Data Engine/storage")
 
 # Create directories if they don't exist
 os.makedirs(REGISTRY_DIR, exist_ok=True)

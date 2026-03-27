@@ -8,7 +8,9 @@ import re
 # Load configuration
 load_dotenv()
 API_KEY = os.getenv("TIINGO_API_KEY")
-BASE_DIR = "/Users/strichgauthier/Documents/SMID-SEC Data Engine"
+# Dynamic Path Resolution (Works on Mac/Linux)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../../"))
 REGISTRY_PATH = os.path.join(BASE_DIR, "engine/registry/master_tracker.csv")
 LOG_DIR = os.path.join(BASE_DIR, "engine/logs")
 

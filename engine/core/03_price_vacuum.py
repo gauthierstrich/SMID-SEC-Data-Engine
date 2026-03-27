@@ -8,11 +8,13 @@ import time
 load_dotenv()
 API_KEY = os.getenv("TIINGO_API_KEY")
 
-# Paths Based on Architecture
-BASE_DIR = "/Users/strichgauthier/Documents/SMID-SEC Data Engine"
+# Dynamic Path Resolution (Works on Mac/Linux)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../../"))
 REGISTRY_PATH = os.path.join(BASE_DIR, "engine/registry/master_tracker.csv")
 
-LACIE_DIR = "/Volumes/LaCie/SMID-SEC Data Engine/storage/bronze/prices"
+# Storage defaults to LaCie on Mac, but can be overridden via .env for Linux
+LACIE_DIR = os.getenv("LACIE_STORAGE_PATH", "/Volumes/LaCie/SMID-SEC Data Engine/storage/bronze/prices")
 os.makedirs(LACIE_DIR, exist_ok=True)
 
 def vacuum_prices():
