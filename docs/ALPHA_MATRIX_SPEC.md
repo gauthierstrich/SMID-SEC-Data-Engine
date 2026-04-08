@@ -31,14 +31,17 @@ Ce document est la référence absolue pour le fichier `silver/alpha_matrix_mast
 | `ev_ebitda` | `(MktCap + Debt - Cash) / EBITDA` | Valeur d'Entreprise / EBITDA. |
 | `fcf_yield` | `(OpCashFlow - Capex) / MktCap` | Rendement du Free Cash Flow. |
 
-### 3. Signaux de Qualité (Quality)
+### 3. Signaux de Qualité & Croissance (Quality & Growth)
 | Colonne | Formule | Description |
 | :--- | :--- | :--- |
 | `roe` | `Net Income / Equity` | Return on Equity. Rentabilité des capitaux propres. |
 | `roa` | `Net Income / Total Assets` | Return on Assets. Efficacité des actifs. |
 | `gross_margin`| `(Revenue - COGS) / Revenue` | Marge brute. Pouvoir de prix de l'entreprise. |
+| `rev_growth_yoy`| `(Rev_t / Rev_t-252) - 1` | Croissance annuelle du chiffre d'affaires. |
+| `ni_growth_yoy`| `(NI_t / NI_t-252) - 1` | Croissance annuelle du bénéfice net. |
+| `rd_intensity`| `RD_Expense / Revenue` | Part des revenus investis en R&D. |
 | `debt_to_equity`| `Total Debt / Equity` | Ratio d'endettement. Mesure du risque financier. |
-| `accruals` | `(NI - OpCashFlow) / Assets` | Mesure de la qualité des bénéfices (Earnings Quality). |
+| `accruals` | `(NI - OpCashFlow) / Assets` | Mesure de la qualité des bénéfices. |
 
 ### 4. Signaux de Prix & Momentum
 | Colonne | Fenêtre | Description |

@@ -2,12 +2,11 @@ import argparse
 import polars as pl
 import os
 import sys
+import json
 from datetime import datetime
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
 from rich import print as rprint
 
 load_dotenv()
@@ -18,7 +17,8 @@ ALPHA_MATRIX_PATH = os.path.join(LACIE_STORAGE, "silver/alpha_matrix_master.parq
 
 console = Console()
 
-def print_banner():
+def print_banner(silent=False):
+    if silent: return
     banner = """
     [bold cyan]
      ███████╗███╗   ███╗██╗██████╗     ███████╗███████╗ ██████╗ 
@@ -28,144 +28,155 @@ def print_banner():
      ███████║██║ ╚═╝ ██║██║██████╔╝    ███████║███████╗╚██████╗ 
      ╚══════╝╚═╝     ╚═╝╚═╝╚═════╝     ╚══════╝╚══════╝ ╚═════╝ 
     [/bold cyan]
-    [bold white]SMID-SEC Data Engine | Institutional Quant Terminal v1.1[/bold white]
+    [bold white]SMID-SEC Data Engine | High-Performance Quant Terminal v1.2[/bold white]
     """
     console.print(banner)
 
 def cmd_status(args):
-    rprint("\n[bold yellow]🔍 DIAGNOSTIC SYSTÈME[/bold yellow]")
     if not os.path.exists(ALPHA_MATRIX_PATH):
-        rprint(f"[bold red]❌ Alpha Matrix non trouvée : {ALPHA_MATRIX_PATH}[/bold red]")
+        rprint(f"[bold red]❌ Alpha Matrix non trouvée.[/bold red]")
         return
     
-    with console.status("[bold green]Analyse du dataset...") as status:
-        df = pl.scan_parquet(ALPHA_MATRIX_PATH)
-        stats = df.select([
-            pl.len().alias("rows"),
-            pl.col("ticker").n_unique().alias("tickers"),
-            pl.col("p_date").min().alias("start"),
-            pl.col("p_date").max().alias("end")
-        ]).collect()
+    df = pl.scan_parquet(ALPHA_MATRIX_PATH)
+    stats = df.select([
+        pl.len().alias("rows"),
+        pl.col("ticker").n_unique().alias("tickers"),
+        pl.col("p_date").min().alias("start"),
+        pl.col("p_date").max().alias("end")
+    ]).collect()
     
-    table = Table(title="Statistiques du Dataset", border_style="cyan")
+    if args.silent:
+        print(json.dumps(stats.to_dicts()[0]))
+        return
+
+    table = Table(title="Statistiques du Dataset Maître", border_style="cyan")
     table.add_column("Métrique", style="bold magenta")
     table.add_column("Valeur", style="bold white")
-    
     table.add_row("Lignes totales", f"{stats[0, 'rows']:,}")
     table.add_row("Entreprises uniques", f"{stats[0, 'tickers']:,}")
-    table.add_row("Période historique", f"{stats[0, 'start']} au {stats[0, 'end']}")
-    table.add_row("Emplacement", ALPHA_MATRIX_PATH)
-    
+    table.add_row("Fenêtre temporelle", f"{stats[0, 'start']} au {stats[0, 'end']}")
     console.print(table)
 
 def cmd_get(args):
     ticker = args.ticker.lower()
-    rprint(f"\n[bold yellow]🔍 RÉCUPÉRATION : {ticker.upper()}[/bold yellow]")
-    df = pl.scan_parquet(ALPHA_MATRIX_PATH).filter(pl.col("ticker") == ticker).tail(10).collect()
+    df = pl.scan_parquet(ALPHA_MATRIX_PATH).filter(pl.col("ticker") == ticker).tail(args.limit).collect()
+    
+    if args.silent:
+        print(df.to_pandas().to_json(orient="records"))
+        return
+
     if df.is_empty():
-        rprint(f"[bold red]❌ Aucune donnée trouvée pour {ticker.upper()}[/bold red]")
+        rprint(f"[bold red]❌ Aucune donnée pour {ticker.upper()}[/bold red]")
     else:
-        table = Table(title=f"Derniers signaux : {ticker.upper()}", box=None, header_style="bold cyan")
-        table.add_column("Date", justify="center")
-        table.add_column("Prix", style="bold green")
-        table.add_column("P/E", style="magenta")
-        table.add_column("ROE", style="yellow")
-        table.add_column("Mom 12M", style="blue")
+        table = Table(title=f"Signaux Récents : {ticker.upper()}", header_style="bold cyan")
+        table.add_column("Date")
+        table.add_column("Prix")
+        table.add_column("P/E")
+        table.add_column("ROE")
+        table.add_column("Rev Growth")
+        table.add_column("R&D Int.")
+        
         for row in df.to_dicts():
-            table.add_row(str(row['p_date']), f"{row['close']:.2f}$", f"{row['pe_ratio']:.1f}" if row['pe_ratio'] else "-", f"{row['roe']*100:.1f}%" if row['roe'] else "-", f"{row['mom_12m']*100:.1f}%" if row['mom_12m'] else "-")
+            table.add_row(
+                str(row['p_date']),
+                f"{row['close']:.2f}$",
+                f"{row['pe_ratio']:.1f}" if row['pe_ratio'] else "-",
+                f"{row['roe']*100:.1f}%" if row['roe'] else "-",
+                f"{row['rev_growth_yoy']*100:.1f}%" if row['rev_growth_yoy'] else "-",
+                f"{row['rd_intensity']*100:.1f}%" if row['rd_intensity'] else "-"
+            )
         console.print(table)
 
 def cmd_screen(args):
-    rprint(f"\n[bold yellow]🎯 FILTRAGE STRATÉGIQUE[/bold yellow]")
     df = pl.scan_parquet(ALPHA_MATRIX_PATH)
     target_date = args.date if args.date else "2026-04-02"
     res = df.filter(pl.col("p_date") == target_date)
+    
+    # Custom Query Filter (The power of Polars)
+    if args.filter:
+        try:
+            # On permet de passer une chaine de caractere complexe a Polars
+            # Note: eval est dangereux, mais ici on est en local. 
+            # On utilise plutot une approche securisee via l'argument parser.
+            pass 
+        except:
+            rprint("[bold red]❌ Erreur dans la syntaxe du filtre.[/bold red]")
+
+    # Ratios hardcoded pour simplicité rapide
     if args.pe_max: res = res.filter(pl.col("pe_ratio") < args.pe_max)
     if args.roe_min: res = res.filter(pl.col("roe") > args.roe_min)
-    if args.mom_min: res = res.filter(pl.col("mom_12m") > args.mom_min)
+    if args.growth_min: res = res.filter(pl.col("rev_growth_yoy") > args.growth_min)
     if args.sector: res = res.filter(pl.col("sector") == args.sector)
-    final = res.select(["ticker", "sector", "close", "pe_ratio", "roe", "mom_12m"]).collect()
+    
+    final = res.collect()
+    
+    if args.silent:
+        print(final.to_pandas().to_json(orient="records"))
+        return
+
     if final.is_empty():
-        rprint(f"[bold red]❌ Aucun candidat pour le {target_date}.[/bold red]")
+        rprint(f"[bold red]❌ Aucun candidat trouvé.[/bold red]")
     else:
-        table = Table(title=f"Top Candidats ({target_date})", border_style="green")
+        table = Table(title=f"Screener Results ({target_date})", border_style="green")
         table.add_column("Ticker", style="bold magenta")
         table.add_column("Secteur")
-        table.add_column("Prix", style="bold green")
-        table.add_column("P/E", justify="right")
-        table.add_column("ROE", justify="right", style="yellow")
-        table.add_column("Mom 12M", justify="right", style="blue")
-        for row in final.sort("mom_12m", descending=True).head(20).to_dicts():
-            table.add_row(row['ticker'].upper(), row['sector'], f"{row['close']:.2f}$", f"{row['pe_ratio']:.1f}" if row['pe_ratio'] else "-", f"{row['roe']*100:.1f}%" if row['roe'] else "-", f"{row['mom_12m']*100:.1f}%" if row['mom_12m'] else "-")
+        table.add_column("P/E")
+        table.add_column("ROE", style="yellow")
+        table.add_column("Growth", style="blue")
+        
+        for row in final.sort("rev_growth_yoy", descending=True).head(20).to_dicts():
+            table.add_row(
+                row['ticker'].upper(), row['sector'],
+                f"{row['pe_ratio']:.1f}" if row['pe_ratio'] else "-",
+                f"{row['roe']*100:.1f}%" if row['roe'] else "-",
+                f"{row['rev_growth_yoy']*100:.1f}%" if row['rev_growth_yoy'] else "-"
+            )
         console.print(table)
 
 def cmd_export(args):
-    rprint(f"\n[bold magenta]📥 EXPORTATION POUR BACKTEST[/bold magenta]")
-    
-    if not args.output:
-        rprint("[bold red]❌ Erreur : Vous devez spécifier un fichier de sortie avec --output (ex: my_backtest.parquet)[/bold red]")
-        return
-
-    with console.status(f"[bold green]Préparation de l'exportation vers {args.output}...") as status:
+    with console.status(f"[bold green]Exportation en cours...") as status:
         df = pl.scan_parquet(ALPHA_MATRIX_PATH)
-        
-        # Filtres temporels
         if args.start: df = df.filter(pl.col("p_date") >= datetime.strptime(args.start, "%Y-%m-%d").date())
         if args.end: df = df.filter(pl.col("p_date") <= datetime.strptime(args.end, "%Y-%m-%d").date())
-        
-        # Filtres d'Univers
         if args.sector: df = df.filter(pl.col("sector") == args.sector)
         if args.min_adv: df = df.filter(pl.col("adv_20d") >= args.min_adv)
         
-        # Sélection de colonnes
         if args.cols:
             cols = ["ticker", "p_date"] + args.cols.split(",")
-            # Ensure unique cols and existence
             df = df.select([c for c in cols if c in df.collect_schema().names()])
         
-        # Exécution
         final = df.collect()
         final.write_parquet(args.output, compression="zstd")
     
-    rprint(f"\n[bold green]✅ Exportation réussie ![/bold green]")
-    rprint(f"   - Fichier : [bold cyan]{args.output}[/bold cyan]")
-    rprint(f"   - Volume  : {len(final):,} lignes exportées.")
-    rprint(f"   - Colonnes: {final.columns}")
+    if not args.silent:
+        rprint(f"\n[bold green]✅ Dataset exporté ({len(final):,} lignes) vers {args.output}[/bold green]")
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="SMID-SEC Data Engine CLI: Une infrastructure de recherche quantitative institutionnelle pour le backtesting de stratégies boursières sans biais et sans triche.",
-        add_help=False
-    )
-    subparsers = parser.add_subparsers(dest="command", help="Commandes disponibles")
+    parser = argparse.ArgumentParser(description="SMID-SEC Data Engine Master CLI", add_help=False)
+    parser.add_argument("--silent", action="store_true", help="Désactive l'UI pour une utilisation par script")
+    subparsers = parser.add_subparsers(dest="command")
 
-    # Status Command
-    status_p = subparsers.add_parser("status", help="Analyse de santé du dataset")
-    status_p.description = "Affiche les statistiques vitales de la matrice Alpha (lignes, tickers, couverture temporelle) et valide l'accessibilité du stockage LaCie."
+    # Commandes
+    subparsers.add_parser("status", help="Statistiques du dataset")
+    
+    get_p = subparsers.add_parser("get", help="Infos ticker")
+    get_p.add_argument("ticker")
+    get_p.add_argument("--limit", type=int, default=10)
 
-    # Get Command
-    get_p = subparsers.add_parser("get", help="Exploration granulaire d'un ticker")
-    get_p.description = "Récupère les 10 dernières journées de cotation enrichies pour un ticker spécifique. Affiche les prix, P/E, ROE et Momentum."
-    get_p.add_argument("ticker", help="Le symbole boursier à analyser (ex: AAPL, TSLA, NVDA).")
+    screen_p = subparsers.add_parser("screen", help="Trouver des opportunités")
+    screen_p.add_argument("--date")
+    screen_p.add_argument("--pe-max", type=float)
+    screen_p.add_argument("--roe-min", type=float)
+    screen_p.add_argument("--growth-min", type=float)
+    screen_p.add_argument("--sector")
 
-    # Screen Command
-    screen_p = subparsers.add_parser("screen", help="Screener multi-facteurs (Point-in-Time)")
-    screen_p.description = "Filtre l'intégralité du marché américain à une date précise du passé selon vos critères Alpha. Utile pour la génération d'hypothèses de trading."
-    screen_p.add_argument("--date", help="Date cible au format YYYY-MM-DD. Par défaut: dernière date connue (2026-04-02).")
-    screen_p.add_argument("--pe-max", type=float, help="P/E Ratio maximum autorisé (Valorisation).")
-    screen_p.add_argument("--roe-min", type=float, help="Return on Equity minimum (Qualité). ex: 0.20 pour 20%%.")
-    screen_p.add_argument("--mom-min", type=float, help="Momentum 12 mois minimum (Tendance). ex: 0.10 pour +10%%.")
-    screen_p.add_argument("--sector", help="Limiter la recherche à un secteur SEC (ex: Technology, Healthcare).")
-
-    # Export Command
-    export_p = subparsers.add_parser("export", help="Générateur de dataset pour Backtest")
-    export_p.description = "Extrait et compresse un sous-ensemble de données pour vos scripts de backtest. Élimine les colonnes inutiles pour maximiser la vitesse de vos simulations."
-    export_p.add_argument("--output", required=True, help="Chemin complet du fichier .parquet de sortie (ex: strategies/value_test.parquet).")
-    export_p.add_argument("--start", help="Date de début de l'extraction (YYYY-MM-DD).")
-    export_p.add_argument("--end", help="Date de fin de l'extraction (YYYY-MM-DD).")
-    export_p.add_argument("--sector", help="Filtrer par secteur pour réduire la taille du fichier.")
-    export_p.add_argument("--min-adv", type=float, help="Seuil de liquidité (ADV 20j en dollars). Exclut les penny stocks illiquides.")
-    export_p.add_argument("--cols", help="Liste des signaux Alpha à inclure, séparés par des virgules (ex: pe_ratio,roe,mom_12m).")
+    export_p = subparsers.add_parser("export", help="Générer un dataset pour backtest")
+    export_p.add_argument("--output", required=True)
+    export_p.add_argument("--start")
+    export_p.add_argument("--end")
+    export_p.add_argument("--sector")
+    export_p.add_argument("--min-adv", type=float)
+    export_p.add_argument("--cols")
 
     if len(sys.argv) == 1:
         print_banner()
@@ -174,7 +185,7 @@ def main():
 
     args = parser.parse_args()
     if args.command:
-        print_banner()
+        print_banner(args.silent)
         if args.command == "status": cmd_status(args)
         elif args.command == "get": cmd_get(args)
         elif args.command == "screen": cmd_screen(args)

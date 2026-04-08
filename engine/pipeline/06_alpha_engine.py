@@ -133,13 +133,21 @@ def generate_alpha_matrix_pro():
                 (pl.col("net_income") / pl.col("total_assets").replace(0, None)).alias("roa"),
                 ((pl.col("revenue") - pl.col("cogs").fill_null(0)) / pl.col("revenue").replace(0, None)).alias("gross_margin"),
                 ((pl.col("long_term_debt").fill_null(0) + pl.col("short_term_debt").fill_null(0)) / pl.col("equity").replace(0, None)).alias("debt_to_equity"),
-                ((pl.col("net_income") - pl.col("operating_cash_flow")) / pl.col("total_assets").replace(0, None)).alias("accruals")
+                ((pl.col("net_income") - pl.col("operating_cash_flow")) / pl.col("total_assets").replace(0, None)).alias("accruals"),
+
+                # Growth (Year-over-Year approximation based on previous filings)
+                (pl.col("revenue") / pl.col("revenue").shift(252).replace(0, None) - 1).alias("rev_growth_yoy"),
+                (pl.col("net_income") / pl.col("net_income").shift(252).replace(0, None) - 1).alias("ni_growth_yoy"),
+                
+                # R&D Intensity
+                (pl.col("rd_expense").fill_null(0) / pl.col("revenue").replace(0, None)).alias("rd_intensity")
             ])
             
             # Final output selection
             final_cols = ["permaTicker", "ticker", "p_date", "close", "volume", "sector", "industry", 
                           "mkt_cap", "pe_ratio", "pb_ratio", "ev_ebitda", "fcf_yield", 
                           "roe", "roa", "gross_margin", "debt_to_equity", "accruals",
+                          "rev_growth_yoy", "ni_growth_yoy", "rd_intensity",
                           "mom_1m", "mom_3m", "mom_6m", "mom_12m", "vol_30d", "vol_90d", "adv_20d"]
             
             final_df = enriched.select([c for col in final_cols if (c := col) in enriched.columns])
