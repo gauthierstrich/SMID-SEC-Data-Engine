@@ -5,7 +5,7 @@
 *   Format Parquet ultra-performant.
 
 ## ✅ Phase 6 : Ingénierie Alpha (2026-04-05)
-*   **Innovation :** Création de `alpha_matrix_pro.parquet`.
+*   **Innovation :** Création de `alpha_matrix_master.parquet`.
 *   **Signaux Quant :** Implémentation de 100% de la liste des ratios Hedge Fund.
 *   **Continuité :** Ratios (PER, PB, etc.) calculés **quotidiennement** en mode Point-in-Time.
 *   **Qualité :** Momentum (1M à 12M) et Volatilité (30j, 90j) intégrés sans look-ahead bias.

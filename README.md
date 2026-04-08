@@ -1,78 +1,73 @@
-# 🏛️ SMID-SEC Data Engine
+# 🏛️ SMID-SEC DATA ENGINE
 
-**SMID-SEC Data Engine** is a high-performance financial data pipeline designed to build a "Survivorship-Bias Free" dataset for the US Small & Mid Caps (SMID) universe. It bridges the gap between raw SEC EDGAR filings and quantitative research.
+[![Status](https://img.shields.io/badge/Status-Institutional_Grade-blue.svg)]()
+[![Backend](https://img.shields.io/badge/Engine-Polars/PyArrow-orange.svg)]()
+[![Data](https://img.shields.io/badge/Source-SEC_EDGAR/Tiingo-green.svg)]()
 
----
+**SMID-SEC Data Engine** is an institutional-grade financial data infrastructure built to produce a **Survivorship-Bias Free** and **Point-in-Time (PIT)** dataset for the US Small & Mid-Cap universe. 
 
-## 🚀 Key Features
-
-*   **Survivorship-Bias Free:** Tracks all tickers, including delisted ("Ghost") stocks.
-*   **SEC EDGAR Integration:** Direct extraction of fundamental facts (XBRL) from the SEC.
-*   **Tiingo Integration:** High-quality historical price data.
-*   **Silver Layer Refinery:** Automated cleaning, CIK matching, and signal generation.
-*   **Alpha Engine:** Generates a daily `alpha_matrix` in Parquet format for instant backtesting.
+Designed for quantitative researchers, it bridges the gap between raw SEC filings and alpha-ready signal matrices, ensuring maximum historical fidelity for backtesting.
 
 ---
 
-## 🛠️ Architecture: The Pipeline
+## 💎 Core Value Proposition
 
-The engine operates in sequential phases located in `engine/pipeline/`:
+### 🛡️ Institutional Data Discipline
+*   **Zero Survivorship Bias:** Systematic tracking of delisted, bankrupted, and renamed companies ("Ghosts").
+*   **Zero Look-ahead Bias:** Fundamental data is strictly aligned with the **Actual SEC Filing Date** (`filed_date`), not the fiscal period end.
+*   **CIK-Centric Integrity:** Uses immuable Central Index Keys (CIK) for all data joins, preventing data loss during ticker changes.
 
-1.  **`01_bootstrap_registry.py`**: Initializes the `master_tracker.csv` from SEC and Tiingo listings.
-2.  **`02_sec_mirror.py`**: Maps CIKs to tickers and metadata.
-3.  **`03_price_vacuum.py`**: Downloads historical prices from Tiingo.
-4.  **`04_sec_fundamentals.py`**: Downloads raw fundamental facts (JSON) from SEC EDGAR.
-5.  **`05_silver_refinery.py`**: Cleans and normalizes price data.
-6.  **`05_silver_fundamentals_refinery.py`**: Extracts and normalizes fundamentals.
-7.  **`06_alpha_engine.py`**: Fuses everything into a master Alpha Matrix.
-
-**Orchestration**: `00_orchestrator.py` monitors and retries failed downloads automatically.
+### ⚡ High-Performance Architecture
+*   **Vectorized Refinery:** Powered by **Polars** (Rust-based) for lightning-fast multi-threaded data processing.
+*   **Columnar Storage:** Utilizes **Apache Parquet (zstd)** to reduce storage footprint by 10x while enabling O(1) random access.
+*   **Big Data Ready:** Implements incremental chunk-based processing to handle millions of rows within restricted memory environments.
 
 ---
 
-## 💻 Setup & Installation
+## 🏗️ Architecture & Pipeline
 
-### 1. Requirements
-*   Python 3.10+
-*   At least 16GB RAM (for Silver Layer refinery)
-*   ~50GB of disk space (depending on history depth)
+The engine operates in three distinct logical layers:
 
-### 2. Installation
+1.  **Bronze Layer (Raw):** Direct ingestion of Tiingo CSVs and SEC EDGAR XBRL JSON Facts.
+2.  **Silver Layer (Refinery):** Normalization of disparate GAAP tags and mapping of CIK-to-Ticker relationships.
+3.  **Alpha Layer (Signals):** Synthesis of quantitative factors (Value, Quality, Momentum, Volatility).
+
+> 📘 **Deep Dive:** For detailed technical specs, see [SYSTEM ARCHITECTURE](docs/ARCHITECTURE.md).
+
+---
+
+## 🛠️ Quick Start
+
+### 1. Installation
 ```bash
-git clone https://github.com/GauthierStrich/SMID-SEC-Data-Engine.git
+git clone https://github.com/gauthierstrich/SMID-SEC-Data-Engine.git
 cd SMID-SEC-Data-Engine
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Configuration
-Copy `.env.example` to `.env` and fill in your keys:
+### 2. Configuration
+Copy `.env.example` to `.env` and configure your API keys and storage paths.
 ```bash
 cp .env.example .env
 ```
-*   `TIINGO_API_KEY`: Your Tiingo API key.
-*   `LACIE_STORAGE_PATH`: Path to where the bulk data (Bronze/Silver) will be stored.
-*   `PROJECT_ROOT`: Absolute path to this repository.
+
+### 3. Usage (The Quant Terminal)
+The `smid.py` CLI provides direct access to the engine:
+*   **Health Check:** `python3 smid.py status`
+*   **Screening:** `python3 smid.py screen --roe-min 0.15 --pe-max 15`
+*   **Export for Backtest:** `python3 smid.py export --output my_strategy.parquet`
 
 ---
 
-## 🎯 Usage
+## 📜 Documentation Index
 
-The main interface is `smid.py`:
-
-*   **Check Status**: `python3 smid.py status`
-*   **Get Ticker Data**: `python3 smid.py get [TICKER]`
-*   **Screen Market**: `python3 smid.py screen --roe-min 0.15 --pe-max 20`
-*   **Export for Backtest**: `python3 smid.py export --output my_data.parquet`
-
----
-
-## 📜 Documentation
-Detailed specs are available in the `docs/` folder:
-*   [CONTEXT.md](docs/CONTEXT.md): Project philosophy and history.
-*   [USER_GUIDE.md](docs/USER_GUIDE.md): Detailed CLI usage.
-*   [ALPHA_MATRIX_SPEC.md](docs/ALPHA_MATRIX_SPEC.md): Signal definitions and math.
+| Document | Description |
+| :--- | :--- |
+| [**Architecture**](docs/ARCHITECTURE.md) | High-level system design and data flow. |
+| [**Alpha Spec**](docs/ALPHA_MATRIX_SPEC.md) | Mathematical definitions of signals (P/E, ROE, etc.). |
+| [**User Guide**](docs/USER_GUIDE.md) | Detailed CLI usage and examples. |
+| [**Context**](docs/CONTEXT.md) | Project genesis and development philosophy. |
 
 ---
-*Developed for Institutional-Grade Quantitative Research.*
+*Developed for Precision Quantitative Research.*
