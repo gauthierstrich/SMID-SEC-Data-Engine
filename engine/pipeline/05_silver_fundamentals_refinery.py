@@ -68,7 +68,13 @@ def parse_sec_json(file_path):
         data = json.load(f)
     
     ticker = data.get("entityName", "Unknown")
-    cik = data.get("cik", "Unknown")
+    
+    # Extraction robuste du CIK depuis le nom du fichier (format: TICKER_CIKXXXXX.json)
+    basename = os.path.basename(file_path).replace('.json', '')
+    try:
+        cik = str(int(basename.split('_CIK')[1]))
+    except:
+        cik = str(data.get("cik", "Unknown"))
     
     all_facts = []
     us_gaap = data.get("facts", {}).get("us-gaap", {})

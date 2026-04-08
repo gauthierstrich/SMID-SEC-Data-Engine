@@ -22,10 +22,10 @@ os.makedirs(SILVER_DIR, exist_ok=True)
 
 def scan_and_clean(f):
     basename = os.path.basename(f).replace(".csv", "")
-    parts = basename.split("_")
+    # Utiliser rsplit pour couper uniquement sur le dernier underscore
+    parts = basename.rsplit("_", 1)
     permaTicker = parts[0]
-    ticker = parts[1] if len(parts) > 1 else "Unknown"
-    
+    ticker = parts[1] if len(parts) > 1 else "Unknown"    
     # Read file
     df = pl.read_csv(f, infer_schema_length=1000)
     

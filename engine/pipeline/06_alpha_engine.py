@@ -48,7 +48,7 @@ def generate_alpha_matrix_pro():
     ).sort("f_date")
 
     # 3. Setup Output
-    output_path = os.path.join(SILVER_DIR, "alpha_matrix_pro.parquet")
+    output_path = os.path.join(SILVER_DIR, "alpha_matrix_master.parquet")
     if os.path.exists(output_path):
         os.remove(output_path)
 
@@ -118,7 +118,7 @@ def generate_alpha_matrix_pro():
 
             enriched = enriched.with_columns([
                 # Market Cap
-                (pl.col("close") * pl.col("shares_outstanding")).alias("mkt_cap")
+                (pl.col("close") * pl.col("shares_outstanding")).replace(0, None).alias("mkt_cap")
             ])
 
             enriched = enriched.with_columns([
