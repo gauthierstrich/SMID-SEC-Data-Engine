@@ -2,6 +2,8 @@
 .env
 .env.local
 .env.secret
+.venv/
+my_venv/
 
 # Storage & Logs (Large data)
 engine/logs/

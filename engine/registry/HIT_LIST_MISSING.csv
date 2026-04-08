@@ -1,0 +1,8 @@
+type,ticker,id
+price,BGL,GHOST_BGL
+price,FORL,GHOST_FORL
+price,FDXTF,GHOST_FDXTF
+price,QVCC,GHOST_QVCC
+price,FKURF,GHOST_FKURF
+fundamental,knrx,0001982960
+fundamental,AUIAF,0001568183
