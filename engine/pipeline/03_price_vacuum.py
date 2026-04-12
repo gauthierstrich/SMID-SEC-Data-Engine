@@ -50,7 +50,10 @@ def vacuum_prices():
         # Pacing: Limit is 10k/hr (~2.77 req/sec). We sleep 0.4s to be safe.
         time.sleep(0.4)
         
-        url = f"https://api.tiingo.com/tiingo/daily/{ticker}/prices?startDate=1900-01-01"
+        # FIX: Use Tiingo's permaTicker if available to avoid survivorship bias and ticker recycling
+        # Tiingo daily API accepts both, but permaTicker is immune to ticker changes/recycling
+        query_id = permaTicker if pd.notna(permaTicker) and str(permaTicker).strip() != "" else ticker
+        url = f"https://api.tiingo.com/tiingo/daily/{query_id}/prices?startDate=1900-01-01"
         try:
             response = requests.get(url, headers=headers)
             

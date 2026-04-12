@@ -30,34 +30,27 @@ To handle the high-volume data requirements of the SMID universe without saturat
 
 ---
 
-## System Architecture
+## Project Structure
 
 ```text
-+-----------------------------------------------------------+
-|                   EXTERNAL DATA SOURCES                   |
-|         (SEC EDGAR XBRL / TIINGO INSTITUTIONAL)           |
-+----------------------------+------------------------------+
-                             |
-                             v
-+----------------------------+------------------------------+
-|               BRONZE LAYER (RAW INGESTION)                |
-|  - 03_price_vacuum.py: Historical OHLCV (CSV)             |
-|  - 04_sec_fundamentals.py: GAAP Fact Extraction (JSON)    |
-+----------------------------+------------------------------+
-                             |
-                             v
-+----------------------------+------------------------------+
-|              SILVER LAYER (REFINERY & PIT)                |
-|  - 05_silver_refinery.py: Multi-threaded Parquet Conversion|
-|  - 05_silver_funds_refinery.py: Currency & Unit Norm      |
-+----------------------------+------------------------------+
-                             |
-                             v
-+----------------------------+------------------------------+
-|               ALPHA LAYER (FACTOR ENGINE)                 |
-|  - 06_alpha_engine.py: N_t Calculation & TTM Validation    |
-|  - Output: alpha_matrix_master.parquet (Signal Matrix)     |
-+----------------------------+------------------------------+
+.
+├── smid.py                 # Core CLI Research Terminal
+├── engine/                 # Production Data Pipeline (Bronze -> Silver -> Alpha)
+│   ├── pipeline/           # ETL Scripts (00 to 06)
+│   ├── registry/           # Ticker & CIK Master Tracking
+│   └── config/             # System Settings
+├── research/               # Quantitative Strategy Research
+│   └── backtests/          # Backtest scripts & performance charts
+├── tests/                  # Integrity & Accuracy Validation
+│   └── audit/              # Institutional-grade data audits
+├── tools/                  # Maintenance & Debugging utilities
+│   └── debug/              # Bug reproduction and data fixing
+├── docs/                   # Documentation & Intelligence
+│   ├── planning/           # Roadmaps & project management
+│   ├── reports/            # Audit & certification reports
+│   └── ...                 # Technical methodologies
+├── requirements.txt        # Dependency Management
+└── .env.example            # Environment Configuration
 ```
 
 ---

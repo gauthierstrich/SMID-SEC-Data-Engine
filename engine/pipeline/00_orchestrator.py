@@ -63,7 +63,7 @@ def main():
             df = pd.read_csv(REGISTRY_PATH)
             missing_prices = df[~df['status_prices'].isin(['success', 'success_empty', 'failed_404'])].shape[0]
             # On vérifie fundamentals_sec pour la SEC
-            missing_sec = df[(df['cik'].notna()) & (~df['status_fundamentals_sec'].isin(['success', 'failed_404']))].shape[0]
+            missing_sec = df[(df['cik'].notna()) & (~df['status_fundamentals'].isin(['success', 'failed_404']))].shape[0]
             
             if (missing_prices > 0 or missing_sec > 0):
                 print(f"⚠️ Missing data detected ({missing_prices} prices, {missing_sec} sec). Retrying...")
