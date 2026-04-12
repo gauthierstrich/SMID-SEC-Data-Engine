@@ -1,73 +1,111 @@
-# 🏛️ SMID-SEC DATA ENGINE
+# SMID-SEC Data Engine: Institutional-Grade Quantitative Infrastructure
 
-[![Status](https://img.shields.io/badge/Status-Institutional_Grade-blue.svg)]()
-[![Backend](https://img.shields.io/badge/Engine-Polars/PyArrow-orange.svg)]()
-[![Data](https://img.shields.io/badge/Source-SEC_EDGAR/Tiingo-green.svg)]()
+## Overview
 
-**SMID-SEC Data Engine** is an institutional-grade financial data infrastructure built to produce a **Survivorship-Bias Free** and **Point-in-Time (PIT)** dataset for the US Small & Mid-Cap universe. 
+The **SMID-SEC Data Engine** is a high-performance financial data pipeline designed for the rigorous requirements of quantitative research and systematic trading within the U.S. Small and Mid-Cap (SMID) universe. The system bridges the structural gap between raw SEC EDGAR filings and market price data, producing a **Point-in-Time (PIT)** and **Survivorship-Bias Free** dataset ready for alpha factor synthesis.
 
-Designed for quantitative researchers, it bridges the gap between raw SEC filings and alpha-ready signal matrices, ensuring maximum historical fidelity for backtesting.
+This infrastructure is engineered to eliminate the common pitfalls of backtesting, such as look-ahead bias and data leakage, by enforcing a strict temporal alignment between information availability and its inclusion in the signal matrix.
 
 ---
 
-## 💎 Core Value Proposition
+## Technical Pillars
 
-### 🛡️ Institutional Data Discipline
-*   **Zero Survivorship Bias:** Systematic tracking of delisted, bankrupted, and renamed companies ("Ghosts").
-*   **Zero Look-ahead Bias:** Fundamental data is strictly aligned with the **Actual SEC Filing Date** (`filed_date`), not the fiscal period end.
-*   **CIK-Centric Integrity:** Uses immuable Central Index Keys (CIK) for all data joins, preventing data loss during ticker changes.
+### 1. Economic Invariance Methodology ($N_t$)
+To solve the structural conflict between the SEC's administrative latency and the market's immediate price adjustments (splits), the engine implements a **Time-Series Normalized Shares ($N_t$)** model. 
 
-### ⚡ High-Performance Architecture
-*   **Vectorized Refinery:** Powered by **Polars** (Rust-based) for lightning-fast multi-threaded data processing.
-*   **Columnar Storage:** Utilizes **Apache Parquet (zstd)** to reduce storage footprint by 10x while enabling O(1) random access.
-*   **Big Data Ready:** Implements incremental chunk-based processing to handle millions of rows within restricted memory environments.
+Traditional market cap calculations often suffer from a "valuation cliff" during stock splits because SEC share counts are only updated quarterly. Our methodology calculates an invariant capital factor $N$ at each filing date:
+$$N = \frac{Price_{Raw} \times Shares_{SEC}}{Price_{Adjusted}}$$
+This factor remains stable through splits and is only updated when a genuine change in the capital structure (buybacks or issuance) is officially reported to the SEC.
 
----
+### 2. Temporal Validation Logic (TTM 10/10)
+Standard Trailing Twelve Months (TTM) calculations often ignore fiscal year shifts or missing reports. The SMID-SEC Data Engine implements a **Temporal Distance Check**:
+*   A TTM window is only validated if the span between the four quarters is between 330 and 390 days.
+*   This ensures that the Price-to-Earnings (P/E) and other fundamental ratios are calculated over a true annual period, preventing distorted signals during accounting period transitions.
 
-## 🏗️ Architecture & Pipeline
+### 3. Point-in-Time (PIT) Integrity
+The engine strictly separates the **Fiscal Period End Date** from the **Official Filing Date** (`filed_date`). Signals are only updated on the day the data becomes public via the SEC EDGAR system, ensuring that backtests reflect the information actually available to the market at that specific timestamp.
 
-The engine operates in three distinct logical layers:
-
-1.  **Bronze Layer (Raw):** Direct ingestion of Tiingo CSVs and SEC EDGAR XBRL JSON Facts.
-2.  **Silver Layer (Refinery):** Normalization of disparate GAAP tags and mapping of CIK-to-Ticker relationships.
-3.  **Alpha Layer (Signals):** Synthesis of quantitative factors (Value, Quality, Momentum, Volatility).
-
-> 📘 **Deep Dive:** For detailed technical specs, see [SYSTEM ARCHITECTURE](docs/ARCHITECTURE.md).
+### 4. Memory-Efficient Streaming Architecture
+To handle the high-volume data requirements of the SMID universe without saturating system resources, the engine utilizes a **Lazy Evaluation & Streaming** model powered by Polars. Data is processed per-ticker in isolated memory buffers, allowing for the processing of millions of historical data points on standard research workstations.
 
 ---
 
-## 🛠️ Quick Start
+## System Architecture
 
-### 1. Installation
-```bash
-git clone https://github.com/gauthierstrich/SMID-SEC-Data-Engine.git
-cd SMID-SEC-Data-Engine
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+```text
++-----------------------------------------------------------+
+|                   EXTERNAL DATA SOURCES                   |
+|         (SEC EDGAR XBRL / TIINGO INSTITUTIONAL)           |
++----------------------------+------------------------------+
+                             |
+                             v
++----------------------------+------------------------------+
+|               BRONZE LAYER (RAW INGESTION)                |
+|  - 03_price_vacuum.py: Historical OHLCV (CSV)             |
+|  - 04_sec_fundamentals.py: GAAP Fact Extraction (JSON)    |
++----------------------------+------------------------------+
+                             |
+                             v
++----------------------------+------------------------------+
+|              SILVER LAYER (REFINERY & PIT)                |
+|  - 05_silver_refinery.py: Multi-threaded Parquet Conversion|
+|  - 05_silver_funds_refinery.py: Currency & Unit Norm      |
++----------------------------+------------------------------+
+                             |
+                             v
++----------------------------+------------------------------+
+|               ALPHA LAYER (FACTOR ENGINE)                 |
+|  - 06_alpha_engine.py: N_t Calculation & TTM Validation    |
+|  - Output: alpha_matrix_master.parquet (Signal Matrix)     |
++----------------------------+------------------------------+
 ```
 
-### 2. Configuration
-Copy `.env.example` to `.env` and configure your API keys and storage paths.
+---
+
+## Operational Interface
+
+### Research Terminal
+The system includes a professional command-line interface for deep-dive company analysis.
+
+**Example Command:**
 ```bash
-cp .env.example .env
+python3 smid.py terminal NVDA
 ```
 
-### 3. Usage (The Quant Terminal)
-The `smid.py` CLI provides direct access to the engine:
-*   **Health Check:** `python3 smid.py status`
-*   **Screening:** `python3 smid.py screen --roe-min 0.15 --pe-max 15`
-*   **Export for Backtest:** `python3 smid.py export --output my_strategy.parquet`
+**Example Output:**
+```text
++-----------------------------------------------------------+
+| NVDA | Technology | Semiconductors                        |
+|                                                           |
+| Price: $124.50 | Market Cap: $3050.2B | P/E: 74.2 | ROE: 92.4%|
++-----------------------------------------------------------+
+| QUARTERLY PERFORMANCE HISTORY (TTM Normalized)            |
+|-----------------------------------------------------------|
+| Date       | Revenue (M) | Net Income (M) | P/E Ratio     |
+| 2024-06-30 | 26,044      | 14,881         | 74.2          |
+| 2024-03-31 | 22,103      | 12,285         | 78.5          |
+| 2023-12-31 | 18,120      | 9,243          | 62.1          |
++-----------------------------------------------------------+
+```
 
 ---
 
-## 📜 Documentation Index
+## Deployment and Setup
 
-| Document | Description |
-| :--- | :--- |
-| [**Architecture**](docs/ARCHITECTURE.md) | High-level system design and data flow. |
-| [**Alpha Spec**](docs/ALPHA_MATRIX_SPEC.md) | Mathematical definitions of signals (P/E, ROE, etc.). |
-| [**User Guide**](docs/USER_GUIDE.md) | Detailed CLI usage and examples. |
-| [**Context**](docs/CONTEXT.md) | Project genesis and development philosophy. |
+1. **Environment Initialization:**
+   ```bash
+   python3 -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+2. **Credential Management:**
+   Configure `.env` with institutional API access tokens for Tiingo and SEC EDGAR identification.
+
+3. **Pipeline Execution:**
+   The orchestrator manages the full data lifecycle:
+   ```bash
+   python3 engine/pipeline/00_orchestrator.py
+   ```
 
 ---
-*Developed for Precision Quantitative Research.*
+*Precision Engineering for Quantitative Research.*

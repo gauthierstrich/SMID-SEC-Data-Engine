@@ -1,101 +1,82 @@
-# 🏛️ SYSTEM ARCHITECTURE: SMID-SEC DATA ENGINE
-**Author:** Quantitative Engineering Team  
-**Standard:** Institutional-Grade Quant Infrastructure  
-**Version:** 1.2 (CIK-Centric Evolution)
+# System Architecture: SMID-SEC Data Engine
 
----
+## 1. Architectural Intent
 
-## 1. Executive Summary
-The **SMID-SEC Data Engine** is a high-performance, point-in-time (PIT) financial data pipeline designed for the US Small & Mid-Cap (SMID) universe. Unlike standard retail datasets, this engine is built from the ground up to be **Survivorship-Bias Free**, capturing delisted companies ("Ghosts") and aligning fundamental data strictly with official SEC filing dates (`filed_date`) to eliminate look-ahead bias.
+The **SMID-SEC Data Engine** is designed to address the "Dirty Data" problem in quantitative finance. Specifically, it targets the synchronization issues between administrative filings (SEC) and market transaction data (Tiingo). The architecture follows a strict three-tier data lineage model (Bronze, Silver, Alpha) to ensure traceability and auditability of every signal produced.
 
----
+## 2. Core Methodologies
 
-## 2. Core Engineering Principles
+### 2.1 Economic Invariance ($N_t$) for Market Capitalization
 
-### 🧪 A. Zero-Cheat Discipline (Point-in-Time)
-A common failure in quantitative backtesting is using data that was not yet public at the simulation date. 
-*   **Fundamental Lag:** We ignore the fiscal period end date for trading signals. We only use the `filed_date` (the day the 10-K/Q hit EDGAR).
-*   **Price Split Correction:** We use `adjClose` for returns but `close` (raw) combined with `shares_outstanding` for Market Cap calculation to ensure structural integrity.
+The primary challenge in historical market capitalization calculation is the decoupling of price and share count during corporate actions (splits). 
 
-### 👻 B. Survivorship-Bias Free
-Most APIs only provide data for currently active tickers. This engine:
-1.  Scans the **SEC Ticker-to-CIK** master list (including defunct companies).
-2.  Maps **Tiingo PermaTickers** (unique IDs that don't change if a company is bought or delisted).
-3.  Maintains a `master_tracker.csv` that acts as the source of truth for the entire universe's history.
+**Traditional Method (Flawed):**
+$$\text{Market Cap}_{t} = Price_{Adjusted, t} \times Shares_{SEC, \text{latest known}}$$
+*Failure:* During a 10-to-1 split, the $Price_{Adjusted}$ remains stable, but if the SEC shares are not updated for 2 months, the Market Cap appears 10x smaller than reality, creating a massive look-ahead bias and false buy signals.
 
-### 🆔 C. CIK-Centric Mapping
-Tickers change (e.g., `FB` -> `META`). CIKs (Central Index Keys) do not.
-*   The engine uses CIK as the primary key for joining Fundamentals (SEC) and Prices (Tiingo).
-*   This prevents "data orphans" where a company exists in SEC records but is lost due to a ticker change in the price database.
+**SMID-SEC $N_t$ Method:**
+We define a "Normalized Share Count" ($N$) as the anchor:
+$$N_{filing} = \frac{Price_{Raw, filing} \times Shares_{SEC, filing}}{Price_{Adjusted, filing}}$$
+Where $N_{filing}$ represents the total equity value expressed in adjusted price units. This factor is calculated strictly on the `filed_date` and forward-filled until the next official report.
+$$\text{Market Cap}_{t} = Price_{Adjusted, t} \times N_{t}$$
+This ensures continuity and eliminates the split-induced valuation cliffs.
 
----
+### 2.2 Temporal Validation (TTM 10/10)
 
-## 3. Data Flow Architecture
+To ensure the integrity of Trailing Twelve Months (TTM) metrics, the engine implements a temporal distance validator. For any given reporting date $T$, the TTM sum is only generated if:
+$$330 \leq Days(End\_Date_{T} - End\_Date_{T-3}) \leq 390$$
+This heuristic handles:
+- Leap years.
+- Slight shifts in fiscal quarter ends.
+- **Fail-safe:** If an enterprise fails to report or shifts its fiscal year significantly, the metric is invalidated rather than returning a corrupted sum.
 
-```mermaid
-graph TD
-    subgraph "External Sources"
-        SEC[SEC EDGAR XBRL]
-        TG[Tiingo API]
-    end
+### 2.3 Unit and Currency Normalization
 
-    subgraph "Phase 1: Bronze (Raw Acquisition)"
-        B1[03_price_vacuum.py]
-        B2[04_sec_fundamentals.py]
-        BR_P[(Bronze Prices: CSV)]
-        BR_F[(Bronze Funds: JSON Facts)]
-    end
+SEC filings often contain mixed units (Thousands vs. Millions) or secondary currencies. The refinery layer (`05_silver_fundamentals_refinery.py`) implements a strict whitelist:
+- **Currency:** `USD` only. Any non-USD facts are rejected to prevent currency contamination of ratios (P/E, P/B).
+- **Shares:** `shares` unit only.
+- **Scaling:** Data is read as raw integers from XBRL facts to prevent rounding errors or scaling mismatches common in third-party data providers.
 
-    subgraph "Phase 2: Silver (Refinery & Normalization)"
-        S1[05_silver_refinery.py]
-        S2[05_silver_fundamentals_refinery.py]
-        SL_P[(Silver Prices: Parquet)]
-        SL_F[(Silver Funds: Parquet)]
-    end
+## 3. Data Flow and Infrastructure
 
-    subgraph "Phase 3: Alpha (Factor Synthesis)"
-        A1[06_alpha_engine.py]
-        AM[(ALPHA_MATRIX_MASTER.parquet)]
-    end
+### 3.1 Lineage Diagram
 
-    TG --> B1 --> BR_P --> S1 --> SL_P
-    SEC --> B2 --> BR_F --> S2 --> SL_F
-    SL_P --> A1
-    SL_F --> A1
-    A1 --> AM
+```text
+[ RAW SOURCE ]          [ BRONZE LAYER ]          [ SILVER LAYER ]          [ ALPHA LAYER ]
+       |                       |                         |                         |
+SEC XBRL JSON --------> sec_facts/*.json --------> fundamentals.parquet ----------+
+                               |                         |                        |
+                               | (Normalization)         | (Unit Check)           |
+                               v                         v                        |
+Tiingo API OHLCV -----> prices/*.csv -----------> prices_master.parquet ----------+
+                               |                         |                        |
+                               | (Vectorization)         | (Split Correction)     |
+                               v                         v                        |
+                               |                         |                        |
+                               +-------------------------+------------------------+
+                                                         |
+                                                         v
+                                              [ 06_alpha_engine.py ]
+                                              (Streaming Processing)
+                                                         |
+                                                         v
+                                              [ ALPHA_MATRIX_MASTER ]
+                                              (Point-in-Time Matrix)
 ```
 
----
+### 3.2 Memory Management Strategy (Streaming)
 
-## 4. Layer Specifications
+Given the potential size of the US SMID universe, a naive "Load All" strategy results in OOM (Out of Memory) errors. The engine utilizes a **Filtered Streaming Loop**:
+1.  **Lazy Scanning:** `pl.scan_parquet` initializes pointers to the master files without loading data.
+2.  **Ticker Isolation:** The main loop processes one `permaTicker` at a time.
+3.  **Sink Partitioning:** The final matrix is written using a `ParquetWriter` which flushes buffers to disk, maintaining a constant memory footprint regardless of the dataset size.
 
-### 🥉 The Bronze Layer (Storage: `bronze/`)
-*   **Prices:** Raw daily CSVs. Each file contains 30+ years of OHLCV + Adjustments.
-*   **Fundamentals:** Raw SEC JSON Facts. Contains the full history of GAAP tags (Revenues, NetIncome, etc.) for a single CIK.
+## 4. Technical Stack
 
-### 🥈 The Silver Layer (Storage: `silver/`)
-*   **Refinery Process:** Uses **Polars** and **PyArrow** for memory-efficient chunked processing.
-*   **Normalization:** 
-    *   Taxonomic Mapping: Maps ~50+ disparate SEC tags (e.g., `NetIncomeLoss`, `NetIncomeLossAvailableToCommonStockholdersBasic`) into a single normalized `net_income` field.
-    *   CIK Extraction: Cleans and pads CIKs to 10 digits for perfect joining.
-*   **Storage:** Compressed Parquet (`zstd`) for O(1) access times.
-
-### 🥇 The Alpha Layer (Storage: `silver/alpha_matrix_master.parquet`)
-The final product. A daily, ticker-date-indexed matrix containing:
-*   **Value Factors:** P/E, P/B, EV/EBITDA, FCF Yield.
-*   **Quality Factors:** ROE, ROA, Gross Margin, Debt-to-Equity.
-*   **Momentum Factors:** 1M, 3M, 12M Returns.
-*   **Risk Factors:** 30d/90d Realized Volatility.
-*   **Liquidity:** 20-day Average Daily Volume (ADV).
+- **Engine:** Python 3.12 (Strongly typed).
+- **Processing:** Polars (Rust-backed DataFrames) for multi-threaded vectorization.
+- **Storage:** Apache Parquet with Zstandard (Zstd) compression.
+- **Joining Strategy:** `join_asof` (Backwards) to ensure Point-in-Time alignment between fundamental filing dates and market prices.
 
 ---
-
-## 5. Technical Stack
-*   **Engine:** Python 3.12+
-*   **Data Frame Engine:** [Polars](https://pola.rs/) (Rust-based, multithreaded)
-*   **Storage Format:** Apache Parquet (Columnar storage)
-*   **IO:** PyArrow for ultra-fast disk-to-memory transfers.
-*   **Orchestration:** Custom `00_orchestrator.py` with auto-retry logic and registry synchronization.
-
----
-*"In quantitative finance, the quality of the signal is a direct function of the purity of the data."*
+*Developed for Institutional-Grade Quantitative Research.*

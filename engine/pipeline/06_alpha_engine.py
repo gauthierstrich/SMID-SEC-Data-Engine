@@ -2,14 +2,11 @@ import polars as pl
 import os
 import pyarrow as pa
 import pyarrow.parquet as pq
-import numpy as np
 from tqdm import tqdm
 from dotenv import load_dotenv
 
-# Load configuration
 load_dotenv()
 
-# Storage Paths
 LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", "/media/gauthierstrich/LaCie/SMID-SEC-Data-Engine-Storage")
 SILVER_DIR = os.path.join(LACIE_STORAGE, "silver")
 PRICE_PATH = os.path.join(SILVER_DIR, "prices_master.parquet")
@@ -17,136 +14,177 @@ FUND_PATH = os.path.join(SILVER_DIR, "fundamentals_master.parquet")
 META_PATH = os.path.join(SILVER_DIR, "metadata_master.parquet")
 
 def normalize_cik(val):
-    if val is None: return None
-    try:
-        return str(int(float(val)))
-    except:
-        return str(val)
+    if val is None: return "0000000000"
+    try: return str(int(float(val))).zfill(10)
+    except: return str(val).zfill(10)
+
+def is_common_stock(ticker):
+    if not ticker: return False
+    t = ticker.upper()
+    if any(suffix in t for suffix in ["-P", "_P", "PR", "WS", "-W", ".U", " WRT"]): return False
+    if len(t) > 5: return False
+    return True
 
 def generate_alpha_matrix_master():
-    print("🚀 [PHASE 6.2] Generating Master Alpha Matrix (TTM Edition)...")
+    print("🚀 [PHASE 6.8] Final Reconstruction - RAM OPTIMIZED (Stream Mode)")
+    output_path = os.path.join(SILVER_DIR, "alpha_matrix_master.parquet")
+    if os.path.exists(output_path): os.remove(output_path)
 
-    # 1. Load Metadata
-    df_meta = pl.read_parquet(META_PATH).select(["permaTicker", "ticker", "cik", "sector", "industry"])
-    df_meta = df_meta.with_columns(
+    # 1. Load Meta (Petite table, OK en RAM)
+    df_meta = pl.read_parquet(META_PATH).with_columns(
         pl.col("cik").map_elements(normalize_cik, return_dtype=pl.String).alias("cik_clean")
     )
-    meta_data = {row['permaTicker']: row for row in df_meta.to_dicts()}
+    df_meta = df_meta.filter(pl.col("ticker").map_elements(is_common_stock, return_dtype=pl.Boolean))
+    meta_dict = {row['permaTicker']: row for row in df_meta.to_dicts()}
 
-    # 2. Pre-process Fundamentals with TTM Logic
-    print("📦 Pre-processing Fundamentals (Calculating TTM)...")
-    df_f = pl.read_parquet(FUND_PATH)
-    df_f = df_f.with_columns(pl.col("cik").cast(pl.String))
-    
-    # Séparation des flux (besoin de TTM) et des stocks (bilan, pas besoin de TTM)
-    flow_tags = ["revenue", "net_income", "operating_income", "operating_cash_flow", "capex", "rd_expense", "sga_expense"]
-    
-    # Pivot pour avoir une ligne par rapport
-    df_f_pivoted = df_f.pivot(
-        values="value",
-        index=["cik", "end_date", "filed_date", "fp"],
-        on="tag",
-        aggregate_function="last"
-    ).sort(["cik", "end_date"])
+    # 2. Scanner les fondamentaux (LAZY MODE - Ne charge RIEN en RAM ici)
+    df_f_scan = pl.scan_parquet(FUND_PATH).with_columns(pl.col("cik").cast(pl.String).str.zfill(10))
 
-    # --- LOGIQUE TTM (Trailing Twelve Months) ---
-    # Pour chaque entreprise, on calcule la somme glissante des rapports disponibles
-    ttm_expressions = []
-    for tag in flow_tags:
-        if tag in df_f_pivoted.columns:
-            # min_periods=1 permet d'avoir un résultat même si on a moins de 4 rapports (ex: entreprises récentes)
-            ttm_expressions.append(
-                pl.col(tag).rolling_sum(window_size=4, min_periods=1).over("cik").alias(f"{tag}_ttm")
-            )
+    # 3. Schema Arrow pour l'écriture
+    arrow_schema = pa.schema([
+        ('ticker', pa.large_string()), ('cik', pa.large_string()), ('p_date', pa.date32()),
+        ('close', pa.float64()), ('adjClose', pa.float64()), ('volume', pa.float64()),
+        ('sector', pa.large_string()), ('industry', pa.large_string()), ('mkt_cap', pa.float64()),
+        ('pe_ratio', pa.float64()), ('pb_ratio', pa.float64()), ('roe', pa.float64()),
+        ('roa', pa.float64()), ('gross_margin', pa.float64()), ('rev_growth_yoy', pa.float64()),
+        ('mom_12m', pa.float64()), ('adv_20d', pa.float64()),
+        ('debt_to_equity', pa.float64()), ('fcf_yield', pa.float64()), ('ev', pa.float64()), ('ev_to_ebit', pa.float64()),
+        ('revenue', pa.float64()), ('net_income', pa.float64()), ('cogs', pa.float64()),
+        ('operating_income', pa.float64()), ('rd_expense', pa.float64()), ('sga_expense', pa.float64()),
+        ('operating_cash_flow', pa.float64()), ('capex', pa.float64()),
+        ('revenue_fy', pa.float64()), ('net_income_fy', pa.float64()), ('cogs_fy', pa.float64()),
+        ('operating_income_fy', pa.float64()), ('rd_expense_fy', pa.float64()), ('sga_expense_fy', pa.float64()),
+        ('shares_outstanding', pa.float64()), ('equity', pa.float64()), ('total_assets', pa.float64()),
+        ('cash', pa.float64()), ('long_term_debt', pa.float64()), ('short_term_debt', pa.float64())
+    ])
     
-    df_f_ttm = df_f_pivoted.with_columns(ttm_expressions)
-    
-    # On prépare la date de jointure (filed_date)
-    df_f_ttm = df_f_ttm.with_columns(
-        pl.col("filed_date").str.to_date("%Y-%m-%d").alias("f_date")
-    ).sort("f_date")
-
-    # 3. Setup Output
-    output_path = os.path.join(SILVER_DIR, "alpha_matrix_master.parquet")
-    if os.path.exists(output_path):
-        os.remove(output_path)
-
-    # 4. Sequential Processing
-    print("📦 Building Alpha Matrix with TTM Signals...")
-    df_p_scan = pl.scan_parquet(PRICE_PATH)
     unique_tickers = df_meta["permaTicker"].unique().to_list()
-    
-    writer = None
-    count_success = 0
+    writer = pq.ParquetWriter(output_path, arrow_schema, compression='zstd')
+    df_p_scan = pl.scan_parquet(PRICE_PATH)
 
-    for pt in tqdm(unique_tickers, desc="Processing Tickers"):
-        meta = meta_data.get(pt)
+    # Balises de colonnes fondamentales
+    base_tags = ["net_income", "revenue", "operating_income", "operating_cash_flow", "capex", "equity", "total_assets", "cash", "long_term_debt", "short_term_debt", "cogs", "rd_expense", "sga_expense"]
+
+    for pt in tqdm(unique_tickers, desc="Stream Matrix Processing"):
+        meta = meta_dict.get(pt)
         if not meta: continue
+        cik = meta["cik_clean"]
         
-        ticker_prices = df_p_scan.filter(pl.col("permaTicker") == pt).collect()
-        if ticker_prices.is_empty(): continue
+        # --- CHARGEMENT CIBLÉ (Lazy -> Collect pour 1 seul CIK) ---
+        # On ne charge en RAM que les fondamentaux de CETTE entreprise.
+        ticker_funds_raw = df_f_scan.filter(pl.col("cik") == cik).collect()
+        if ticker_funds_raw.is_empty(): continue
+
+        # --- CALCULS TTM (Per Ticker - Institutional Grade) ---
+        df_arr = ticker_funds_raw.pivot(values="val", index=["cik", "end_date", "filed_date", "fp", "is_fy", "is_quarter"], on="tag", aggregate_function="last")
+        for tag in base_tags:
+            if tag not in df_arr.columns: df_arr = df_arr.with_columns(pl.lit(None).cast(pl.Float64).alias(tag))
+
+        df_arr = df_arr.sort("filed_date")
         
-        enriched = ticker_prices.with_columns([
+        # On calcule les TTM uniquement si on a 4 trimestres consécutifs sans trou temporel majeur
+        # Logic: sum of 4 quarters AND check if (end_date[t] - end_date[t-3]) is ~365 days
+        ttm_cols = ["net_income", "revenue", "operating_income", "operating_cash_flow", "capex"]
+        
+        # Convertir end_date pour le calcul de distance
+        df_arr = df_arr.with_columns(pl.col("end_date").str.to_date("%Y-%m-%d").alias("e_date"))
+        
+        df_q = df_arr.filter(pl.col("is_quarter") == True).sort("e_date")
+        
+        if len(df_q) >= 4:
+            # Calcul de la distance temporelle (Lookback de 3 trimestres pour couvrir 1 an)
+            df_q = df_q.with_columns([
+                (pl.col("e_date") - pl.col("e_date").shift(3)).dt.total_days().alias("ttm_days")
+            ])
+            
+            # On ne somme que si ttm_days est entre 330 et 390 jours (marge pour années bissextiles et décalages)
+            for tag in ttm_cols:
+                df_q = df_q.with_columns([
+                    pl.when((pl.col("ttm_days") >= 330) & (pl.col("ttm_days") <= 390))
+                    .then(pl.col(tag).rolling_sum(window_size=4))
+                    .otherwise(None)
+                    .alias(f"{tag}_ttm")
+                ])
+        else:
+            # Pas assez de données pour le TTM
+            for tag in ttm_cols:
+                df_q = df_q.with_columns(pl.lit(None).cast(pl.Float64).alias(f"{tag}_ttm"))
+
+        df_q_select = df_q.select(["cik", "end_date", "filed_date", "net_income_ttm", "revenue_ttm", "operating_income_ttm", "operating_cash_flow_ttm", "capex_ttm"])
+        
+        df_arr = df_arr.join(df_q_select, on=["cik", "end_date", "filed_date"], how="left").with_columns([
+            pl.col(c).forward_fill() for c in ["net_income_ttm", "revenue_ttm", "operating_income_ttm", "operating_cash_flow_ttm", "capex_ttm"]
+        ])
+        
+        df_fy = ticker_funds_raw.filter(pl.col("is_fy") == True).pivot(values="raw_val", index=["cik", "end_date", "filed_date"], on="tag", aggregate_function="last")
+        rename_map = {col: f"{col}_fy" for col in df_fy.columns if col not in ["cik", "end_date", "filed_date"]}
+        df_fy = df_fy.rename(rename_map)
+
+        ticker_funds_combined = df_arr.join(df_fy, on=["cik", "end_date", "filed_date"], how="left").sort("filed_date")
+        ticker_funds_combined = ticker_funds_combined.with_columns(pl.col("filed_date").str.to_date("%Y-%m-%d", strict=False).alias("f_date"))
+
+        # --- JOIN PRIX ---
+        prices = df_p_scan.filter(pl.col("permaTicker") == pt).collect()
+        if prices.is_empty(): continue
+        
+        enriched = prices.with_columns([
             pl.col("date").str.slice(0, 10).str.to_date("%Y-%m-%d").alias("p_date"),
-            (pl.col("close") * pl.col("volume")).alias("dollar_volume")
+            (pl.col("adjClose") * pl.col("adjVolume")).alias("dollar_volume")
         ]).sort("p_date")
         
-        # Momentum & Vol
         enriched = enriched.with_columns([
-            (pl.col("close") / pl.col("close").shift(1) - 1).alias("daily_return"),
-            (pl.col("close") / pl.col("close").shift(252).replace(0, None) - 1).alias("mom_12m")
-        ])
-        enriched = enriched.with_columns([
-            pl.col("daily_return").rolling_std(window_size=30).alias("vol_30d"),
+            (pl.col("adjClose") / pl.col("adjClose").shift(252).replace(0, None) - 1).alias("mom_12m"),
             pl.col("dollar_volume").rolling_mean(window_size=20).alias("adv_20d")
         ])
         
-        cik = meta["cik_clean"]
-        if not cik or cik == "None": continue
-        ticker_funds = df_f_ttm.filter(pl.col("cik") == cik)
+        enriched = enriched.join_asof(ticker_funds_combined, left_on="p_date", right_on="f_date")
+
+        # --- CALCUL MARKET CAP (N_t Method) ---
+        # On récupère les shares aux dates de filing pour N_t
+        shares_timeline = ticker_funds_raw.filter(pl.col("tag") == "shares_outstanding").select(["filed_date", "val"]).rename({"val": "shares_sec"})
+        shares_timeline = shares_timeline.with_columns(pl.col("filed_date").str.to_date("%Y-%m-%d", strict=False).alias("f_date")).filter(pl.col("f_date").is_not_null())
         
-        if not ticker_funds.is_empty():
-            enriched = enriched.join_asof(ticker_funds, left_on="p_date", right_on="f_date")
-            if not enriched["f_date"].is_not_null().any(): continue
+        enriched = enriched.join(shares_timeline, left_on="p_date", right_on="f_date", how="left")
+        enriched = enriched.with_columns(
+            ((pl.col("close") * pl.col("shares_sec")) / pl.col("adjClose").replace(0, None)).alias("n_at_filing")
+        ).with_columns(
+            pl.col("n_at_filing").forward_fill().alias("n_shares")
+        )
+        
+        mkt_cap = (pl.col("adjClose") * pl.col("n_shares")).replace(0, None)
+        total_debt = pl.col("long_term_debt").fill_null(0) + pl.col("short_term_debt").fill_null(0)
+        ev = mkt_cap + total_debt - pl.col("cash").fill_null(0)
+        fcf = pl.col("operating_cash_flow_ttm").fill_null(0) - pl.col("capex_ttm").fill_null(0).abs()
+        
+        enriched = enriched.with_columns([
+            mkt_cap.alias("mkt_cap"),
+            (mkt_cap / pl.col("net_income_ttm").replace(0, None)).alias("pe_ratio"),
+            (mkt_cap / pl.col("equity").replace(0, None)).alias("pb_ratio"),
+            (pl.col("net_income_ttm") / pl.col("equity").replace(0, None)).alias("roe"),
+            (pl.col("net_income_ttm") / pl.col("total_assets").replace(0, None)).alias("roa"),
+            ((pl.col("revenue").fill_null(0) - pl.col("cogs").fill_null(0)) / pl.col("revenue").replace(0, None)).alias("gross_margin"),
+            (pl.col("revenue_ttm") / pl.col("revenue_ttm").shift(252).replace(0, None) - 1).alias("rev_growth_yoy"),
+            (total_debt / pl.col("equity").replace(0, None)).alias("debt_to_equity"),
+            (fcf / mkt_cap.replace(0, None)).alias("fcf_yield"),
+            ev.alias("ev"),
+            (ev / pl.col("operating_income_ttm").replace(0, None)).alias("ev_to_ebit"),
+            pl.lit(str(meta.get("sector", "Unknown"))).alias("sector"),
+            pl.lit(str(meta.get("industry", "Unknown"))).alias("industry"),
+            pl.lit(cik).alias("cik")
+        ])
 
-            # --- CALCUL DES RATIOS BASÉS SUR LE TTM ---
-            mkt_cap = (pl.col("close") * pl.col("shares_outstanding")).replace(0, None)
-            
-            # On vérifie la présence des colonnes TTM
-            for tag in flow_tags:
-                col_ttm = f"{tag}_ttm"
-                if col_ttm not in enriched.columns:
-                    enriched = enriched.with_columns(pl.lit(None).cast(pl.Float64).alias(col_ttm))
+        # S'assurer que TOUTES les colonnes du schéma existent
+        for col_name in arrow_schema.names:
+            if col_name not in enriched.columns:
+                enriched = enriched.with_columns(pl.lit(None).cast(pl.Float64).alias(col_name))
 
-            enriched = enriched.with_columns([
-                mkt_cap.alias("mkt_cap"),
-                # VRAI PER TTM : Cap / Bénéfice des 12 derniers mois
-                (mkt_cap / pl.col("net_income_ttm").replace(0, None)).alias("pe_ratio"),
-                # VRAI ROE TTM : Bénéfice 12m / Capitaux Propres actuels
-                (pl.col("net_income_ttm") / pl.col("equity").replace(0, None)).alias("roe"),
-                # Croissance TTM : Comparaison du bloc de 12 mois actuel vs bloc de 12 mois précédent
-                (pl.col("revenue_ttm") / pl.col("revenue_ttm").shift(252).replace(0, None) - 1).alias("rev_growth_yoy"),
-                # Intensité R&D TTM
-                (pl.col("rd_expense_ttm").fill_null(0) / pl.col("revenue_ttm").replace(0, None)).alias("rd_intensity")
-            ])
+        final_chunk = enriched.select(arrow_schema.names).with_columns([
+            pl.col(c).cast(pl.String) for c in ["ticker", "cik", "sector", "industry"]
+        ])
+        writer.write_table(final_chunk.to_arrow())
 
-            # Ajout Secteurs
-            sector_v = str(meta["sector"]) if meta["sector"] else "Unknown"
-            enriched = enriched.with_columns([pl.lit(sector_v).alias("sector")])
-
-            # Sélection Finale
-            final_cols = ["ticker", "p_date", "close", "sector", "mkt_cap", "pe_ratio", "roe", "rev_growth_yoy", "rd_intensity", "mom_12m", "vol_30d", "adv_20d"]
-            final_df = enriched.select([c for col in final_cols if (c := col) in enriched.columns])
-            
-            table = final_df.to_arrow()
-            if writer is None:
-                writer = pq.ParquetWriter(output_path, table.schema, compression='zstd')
-            writer.write_table(table)
-            count_success += 1
-
-    if writer:
-        writer.close()
-    print(f"\n✅ Alpha Matrix Master avec TTM générée : {output_path}")
+    writer.close()
+    print(f"✅ QUANT MASTER MATRIX BUILT (STREAMING MODE): {output_path}")
 
 if __name__ == "__main__":
     generate_alpha_matrix_master()
