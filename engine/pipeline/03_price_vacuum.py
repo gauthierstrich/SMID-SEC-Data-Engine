@@ -13,8 +13,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../../"))
 REGISTRY_PATH = os.path.join(BASE_DIR, "engine/registry/master_tracker.csv")
 
-# Storage defaults to LaCie on Mac, but can be overridden via .env for Linux
-LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", "/media/gauthierstrich/LaCie/SMID-SEC-Data-Engine-Storage")
+# Storage defaults to relative 'storage' folder if no .env override
+DEFAULT_STORAGE = os.path.join(BASE_DIR, "storage")
+LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", DEFAULT_STORAGE)
+
 LACIE_DIR = os.path.join(LACIE_STORAGE, "bronze/prices")
 os.makedirs(LACIE_DIR, exist_ok=True)
 

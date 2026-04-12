@@ -7,7 +7,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", "/media/gauthierstrich/LaCie/SMID-SEC-Data-Engine-Storage")
+# --- CONFIGURATION DYNAMIQUE DES CHEMINS ---
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../../"))
+
+# Priorité 1: Variable d'environnement (si définie dans .env)
+# Priorité 2: Détection automatique d'un dossier 'storage' à la racine du projet
+DEFAULT_STORAGE = os.path.join(BASE_DIR, "storage")
+LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", DEFAULT_STORAGE)
+
 SILVER_DIR = os.path.join(LACIE_STORAGE, "silver")
 PRICE_PATH = os.path.join(SILVER_DIR, "prices_master.parquet")
 FUND_PATH = os.path.join(SILVER_DIR, "fundamentals_master.parquet")

@@ -10,7 +10,12 @@ from datetime import datetime
 
 load_dotenv()
 
-LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", "/media/gauthierstrich/LaCie/SMID-SEC-Data-Engine-Storage")
+# --- CONFIGURATION DYNAMIQUE ---
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../../"))
+DEFAULT_STORAGE = os.path.join(BASE_DIR, "storage")
+LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", DEFAULT_STORAGE)
+
 BRONZE_FUNDS = os.path.join(LACIE_STORAGE, "bronze/fundamentals/sec_facts")
 SILVER_DIR = os.path.join(LACIE_STORAGE, "silver")
 os.makedirs(SILVER_DIR, exist_ok=True)

@@ -14,7 +14,9 @@ BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../../"))
 REGISTRY_PATH = os.path.join(BASE_DIR, "engine/registry/master_tracker.csv")
 
 # Storage for SEC Fundamentals (JSON Facts)
-LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", "/media/gauthierstrich/LaCie/SMID-SEC-Data-Engine-Storage")
+DEFAULT_STORAGE = os.path.join(BASE_DIR, "storage")
+LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", DEFAULT_STORAGE)
+
 OUTPUT_DIR = os.path.join(LACIE_STORAGE, "bronze/fundamentals/sec_facts")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 

@@ -25,8 +25,13 @@ from rich.box import ROUNDED, HEAVY_EDGE
 
 load_dotenv()
 
-# --- CONFIGURATION ---
-LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", "/media/gauthierstrich/LaCie/SMID-SEC-Data-Engine-Storage")
+# --- CONFIGURATION DYNAMIQUE ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Si aucune variable d'environnement n'est définie, on cherche un dossier 'storage' à la racine
+DEFAULT_STORAGE = os.path.join(BASE_DIR, "storage")
+LACIE_STORAGE = os.getenv("LACIE_STORAGE_PATH", DEFAULT_STORAGE)
+
+# Construction des chemins relatifs aux données Silver
 ALPHA_MATRIX_PATH = os.path.join(LACIE_STORAGE, "silver/alpha_matrix_master.parquet")
 FUND_PATH = os.path.join(LACIE_STORAGE, "silver/fundamentals_master.parquet")
 
