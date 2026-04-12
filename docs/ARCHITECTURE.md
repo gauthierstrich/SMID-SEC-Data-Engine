@@ -71,12 +71,25 @@ Given the potential size of the US SMID universe, a naive "Load All" strategy re
 2.  **Ticker Isolation:** The main loop processes one `permaTicker` at a time.
 3.  **Sink Partitioning:** The final matrix is written using a `ParquetWriter` which flushes buffers to disk, maintaining a constant memory footprint regardless of the dataset size.
 
-## 4. Technical Stack
+## 4. Pipeline Robustness and Fault Tolerance
+
+### 4.1 Distributed Ingestion Logic
+The ingestion engine is engineered for unreliable network environments:
+- **Exponential Backoff:** Implements a jitter-based retry mechanism for API rate limits (HTTP 429).
+- **Atomic Writes:** Data is written to temporary buffers before being committed to the Bronze layer, preventing file corruption.
+- **State Persistence:** The `master_tracker.csv` acts as a distributed state machine, allowing the pipeline to resume from the point of failure.
+
+### 4.2 Data Lineage and Traceability
+Every data point in the final Alpha Matrix can be traced back to its raw source:
+1. **Source Identifiers:** We preserve the SEC Accession Number (`accn`) and Tiingo `permaTicker` throughout the transformation.
+2. **Audit Trails:** The `integrity_check.py` suite allows for systematic verification of outputs against historical benchmarks.
+
+## 5. Technical Stack
 
 - **Engine:** Python 3.12 (Strongly typed).
 - **Processing:** Polars (Rust-backed DataFrames) for multi-threaded vectorization.
 - **Storage:** Apache Parquet with Zstandard (Zstd) compression.
-- **Joining Strategy:** `join_asof` (Backwards) to ensure Point-in-Time alignment between fundamental filing dates and market prices.
+- **Joining Strategy:** `join_asof` (Backwards) to ensure Point-in-Time alignment.
 
 ---
 *Developed for Institutional-Grade Quantitative Research.*
