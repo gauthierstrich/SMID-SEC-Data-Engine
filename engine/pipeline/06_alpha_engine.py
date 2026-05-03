@@ -34,18 +34,18 @@ def is_common_stock(ticker):
     return True
 
 def generate_alpha_matrix_master():
-    print("🚀 [PHASE 6.8] Final Reconstruction - RAM OPTIMIZED (Stream Mode)")
+    print("🚀 [PHASE 6.8] Final Reconstruction - RAM OPTIMIZED (Stream Mode) - PIT FIXED")
     output_path = os.path.join(SILVER_DIR, "alpha_matrix_master.parquet")
     if os.path.exists(output_path): os.remove(output_path)
 
-    # 1. Load Meta (Petite table, OK en RAM)
+    # 1. Load Meta
     df_meta = pl.read_parquet(META_PATH).with_columns(
         pl.col("cik").map_elements(normalize_cik, return_dtype=pl.String).alias("cik_clean")
     )
     df_meta = df_meta.filter(pl.col("ticker").map_elements(is_common_stock, return_dtype=pl.Boolean))
     meta_dict = {row['permaTicker']: row for row in df_meta.to_dicts()}
 
-    # 2. Scanner les fondamentaux (LAZY MODE - Ne charge RIEN en RAM ici)
+    # 2. Scanner les fondamentaux
     df_f_scan = pl.scan_parquet(FUND_PATH).with_columns(pl.col("cik").cast(pl.String).str.zfill(10))
 
     # 3. Schema Arrow pour l'écriture
@@ -70,68 +70,93 @@ def generate_alpha_matrix_master():
     writer = pq.ParquetWriter(output_path, arrow_schema, compression='zstd')
     df_p_scan = pl.scan_parquet(PRICE_PATH)
 
-    # Balises de colonnes fondamentales
     base_tags = ["net_income", "revenue", "operating_income", "operating_cash_flow", "capex", "equity", "total_assets", "cash", "long_term_debt", "short_term_debt", "cogs", "rd_expense", "sga_expense"]
+    ttm_base_cols = ["net_income", "revenue", "operating_income", "operating_cash_flow", "capex"]
 
     for pt in tqdm(unique_tickers, desc="Stream Matrix Processing"):
         meta = meta_dict.get(pt)
         if not meta: continue
         cik = meta["cik_clean"]
         
-        # --- CHARGEMENT CIBLÉ (Lazy -> Collect pour 1 seul CIK) ---
-        # On ne charge en RAM que les fondamentaux de CETTE entreprise.
+        # --- CHARGEMENT CIBLÉ ---
         ticker_funds_raw = df_f_scan.filter(pl.col("cik") == cik).collect()
         if ticker_funds_raw.is_empty(): continue
+        
+        ticker_funds_raw = ticker_funds_raw.with_columns([
+            pl.col("end_date").str.to_date("%Y-%m-%d").alias("e_date"),
+            pl.col("filed_date").str.to_date("%Y-%m-%d").alias("f_date")
+        ]).filter(pl.col("f_date").is_not_null())
 
-        # --- CALCULS TTM (Per Ticker - Institutional Grade) ---
-        df_arr = ticker_funds_raw.pivot(values="val", index=["cik", "end_date", "filed_date", "fp", "is_fy", "is_quarter"], on="tag", aggregate_function="last")
-        for tag in base_tags:
-            if tag not in df_arr.columns: df_arr = df_arr.with_columns(pl.lit(None).cast(pl.Float64).alias(tag))
-
-        df_arr = df_arr.sort("filed_date")
-        
-        # On calcule les TTM uniquement si on a 4 trimestres consécutifs sans trou temporel majeur
-        # Logic: sum of 4 quarters AND check if (end_date[t] - end_date[t-3]) is ~365 days
-        ttm_cols = ["net_income", "revenue", "operating_income", "operating_cash_flow", "capex"]
-        
-        # Convertir end_date pour le calcul de distance
-        df_arr = df_arr.with_columns(pl.col("end_date").str.to_date("%Y-%m-%d").alias("e_date"))
-        
-        df_q = df_arr.filter(pl.col("is_quarter") == True).sort("e_date")
-        
-        if len(df_q) >= 4:
-            # Calcul de la distance temporelle (Lookback de 3 trimestres pour couvrir 1 an)
-            df_q = df_q.with_columns([
-                (pl.col("e_date") - pl.col("e_date").shift(3)).dt.total_days().alias("ttm_days")
-            ])
+        # --- 1. BUILD PIT TTM ---
+        df_q = ticker_funds_raw.filter(pl.col("is_quarter") == True)
+        if not df_q.is_empty():
+            df_q_piv = df_q.pivot(values="val", index=["e_date", "f_date"], on="tag", aggregate_function="last")
             
-            # On ne somme que si ttm_days est entre 330 et 390 jours (marge pour années bissextiles et décalages)
+            f_dates_df = df_q_piv.select(["f_date"]).unique().sort("f_date")
+            
+            pit_state = f_dates_df.join(df_q_piv, how="cross")
+            pit_state = pit_state.filter(pl.col("f_date_right") <= pl.col("f_date"))
+            
+            pit_state = pit_state.sort(["f_date", "e_date", "f_date_right"]).group_by(["f_date", "e_date"]).last()
+            top4_quarters = pit_state.sort(["f_date", "e_date"], descending=[False, True]).group_by("f_date", maintain_order=True).head(4)
+            
+            ttm_cols = [t for t in ttm_base_cols if t in top4_quarters.columns]
+            
+            agg_exprs = [
+                pl.col("e_date").min().alias("min_e_date"),
+                pl.col("e_date").max().alias("max_e_date"),
+                pl.len().alias("q_count")
+            ] + [pl.col(tag).sum().alias(f"{tag}_ttm") for tag in ttm_cols]
+            
+            ttm_agg = top4_quarters.group_by("f_date").agg(agg_exprs)
+            ttm_agg = ttm_agg.with_columns((pl.col("max_e_date") - pl.col("min_e_date")).dt.total_days().alias("ttm_days"))
+            
+            # FIX: TTM distance between end of Q1 and end of Q4 is ~275 days (9 months distance).
             for tag in ttm_cols:
-                df_q = df_q.with_columns([
-                    pl.when((pl.col("ttm_days") >= 330) & (pl.col("ttm_days") <= 390))
-                    .then(pl.col(tag).rolling_sum(window_size=4))
+                ttm_agg = ttm_agg.with_columns(
+                    pl.when((pl.col("q_count") == 4) & (pl.col("ttm_days") >= 265) & (pl.col("ttm_days") <= 285))
+                    .then(pl.col(f"{tag}_ttm"))
                     .otherwise(None)
                     .alias(f"{tag}_ttm")
-                ])
+                )
+            ttm_agg = ttm_agg.drop(["min_e_date", "max_e_date", "q_count", "ttm_days"])
         else:
-            # Pas assez de données pour le TTM
-            for tag in ttm_cols:
-                df_q = df_q.with_columns(pl.lit(None).cast(pl.Float64).alias(f"{tag}_ttm"))
+            ttm_agg = pl.DataFrame({"f_date": [], **{f"{tag}_ttm": [] for tag in ttm_base_cols}}, schema={"f_date": pl.Date, **{f"{tag}_ttm": pl.Float64 for tag in ttm_base_cols}})
 
-        df_q_select = df_q.select(["cik", "end_date", "filed_date", "net_income_ttm", "revenue_ttm", "operating_income_ttm", "operating_cash_flow_ttm", "capex_ttm"])
+        # --- 2. BUILD INSTANT AND FY TAGS ---
+        df_arr = ticker_funds_raw.pivot(values="val", index=["e_date", "f_date"], on="tag", aggregate_function="last")
         
-        df_arr = df_arr.join(df_q_select, on=["cik", "end_date", "filed_date"], how="left").with_columns([
-            pl.col(c).forward_fill() for c in ["net_income_ttm", "revenue_ttm", "operating_income_ttm", "operating_cash_flow_ttm", "capex_ttm"]
-        ])
-        
-        df_fy = ticker_funds_raw.filter(pl.col("is_fy") == True).pivot(values="raw_val", index=["cik", "end_date", "filed_date"], on="tag", aggregate_function="last")
-        rename_map = {col: f"{col}_fy" for col in df_fy.columns if col not in ["cik", "end_date", "filed_date"]}
+        df_fy = ticker_funds_raw.filter(pl.col("is_fy") == True).pivot(values="raw_val", index=["e_date", "f_date"], on="tag", aggregate_function="last")
+        rename_map = {col: f"{col}_fy" for col in df_fy.columns if col not in ["e_date", "f_date"]}
         df_fy = df_fy.rename(rename_map)
+        
+        df_comb = df_arr.join(df_fy, on=["e_date", "f_date"], how="left")
+        df_comb = df_comb.sort(["f_date", "e_date"]).group_by("f_date").last()
+        
+        # --- 3. MERGE TTM AND COMBINED ---
+        ticker_funds_combined = df_comb.join(ttm_agg, on="f_date", how="left").sort("f_date")
+        
+        for tag in base_tags:
+            if tag not in ticker_funds_combined.columns:
+                ticker_funds_combined = ticker_funds_combined.with_columns(pl.lit(None).cast(pl.Float64).alias(tag))
+        for tag in ttm_base_cols:
+            ttm_tag = f"{tag}_ttm"
+            fy_tag = f"{tag}_fy"
+            if ttm_tag not in ticker_funds_combined.columns:
+                ticker_funds_combined = ticker_funds_combined.with_columns(pl.lit(None).cast(pl.Float64).alias(ttm_tag))
+            if fy_tag in ticker_funds_combined.columns:
+                ticker_funds_combined = ticker_funds_combined.with_columns(
+                    pl.when(pl.col(fy_tag).is_not_null())
+                    .then(pl.col(fy_tag))
+                    .otherwise(pl.col(ttm_tag))
+                    .alias(ttm_tag)
+                )
 
-        ticker_funds_combined = df_arr.join(df_fy, on=["cik", "end_date", "filed_date"], how="left").sort("filed_date")
-        ticker_funds_combined = ticker_funds_combined.with_columns(pl.col("filed_date").str.to_date("%Y-%m-%d", strict=False).alias("f_date"))
+        for tag in ["revenue_fy", "net_income_fy", "cogs_fy", "operating_income_fy", "rd_expense_fy", "sga_expense_fy"]:
+            if tag not in ticker_funds_combined.columns:
+                ticker_funds_combined = ticker_funds_combined.with_columns(pl.lit(None).cast(pl.Float64).alias(tag))
 
-        # --- JOIN PRIX ---
+        # --- 4. JOIN PRIX ---
         prices = df_p_scan.filter(pl.col("permaTicker") == pt).collect()
         if prices.is_empty(): continue
         
@@ -146,11 +171,15 @@ def generate_alpha_matrix_master():
         ])
         
         enriched = enriched.join_asof(ticker_funds_combined, left_on="p_date", right_on="f_date")
+        
+        cols_to_ffill = [c for c in ticker_funds_combined.columns if c not in ["f_date", "e_date"]]
+        enriched = enriched.with_columns([
+            pl.col(c).forward_fill() for c in cols_to_ffill if c in enriched.columns
+        ])
 
-        # --- CALCUL MARKET CAP (N_t Method) ---
-        # On récupère les shares aux dates de filing pour N_t
-        shares_timeline = ticker_funds_raw.filter(pl.col("tag") == "shares_outstanding").select(["filed_date", "val"]).rename({"val": "shares_sec"})
-        shares_timeline = shares_timeline.with_columns(pl.col("filed_date").str.to_date("%Y-%m-%d", strict=False).alias("f_date")).filter(pl.col("f_date").is_not_null())
+        # --- 5. CALCUL MARKET CAP (N_t Method) ---
+        shares_timeline = ticker_funds_raw.filter(pl.col("tag") == "shares_outstanding").select(["f_date", "val"]).rename({"val": "shares_sec"})
+        shares_timeline = shares_timeline.sort(["f_date", "shares_sec"]).group_by("f_date").last()
         
         enriched = enriched.join(shares_timeline, left_on="p_date", right_on="f_date", how="left")
         enriched = enriched.with_columns(
@@ -168,7 +197,7 @@ def generate_alpha_matrix_master():
             mkt_cap.alias("mkt_cap"),
             (mkt_cap / pl.col("net_income_ttm").replace(0, None)).alias("pe_ratio"),
             (mkt_cap / pl.col("equity").replace(0, None)).alias("pb_ratio"),
-            (pl.col("net_income_ttm") / pl.col("equity").replace(0, None)).alias("roe"),
+            (pl.col("net_income_ttm") / pl.col("total_assets").replace(0, None)).alias("roe"),
             (pl.col("net_income_ttm") / pl.col("total_assets").replace(0, None)).alias("roa"),
             ((pl.col("revenue").fill_null(0) - pl.col("cogs").fill_null(0)) / pl.col("revenue").replace(0, None)).alias("gross_margin"),
             (pl.col("revenue_ttm") / pl.col("revenue_ttm").shift(252).replace(0, None) - 1).alias("rev_growth_yoy"),
@@ -181,7 +210,6 @@ def generate_alpha_matrix_master():
             pl.lit(cik).alias("cik")
         ])
 
-        # S'assurer que TOUTES les colonnes du schéma existent
         for col_name in arrow_schema.names:
             if col_name not in enriched.columns:
                 enriched = enriched.with_columns(pl.lit(None).cast(pl.Float64).alias(col_name))
